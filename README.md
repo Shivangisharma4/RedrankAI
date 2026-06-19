@@ -1,4 +1,16 @@
+---
+title: RedrankAI
+emoji: 🎯
+colorFrom: yellow
+colorTo: red
+sdk: docker
+app_port: 8080
+pinned: false
+---
+
 # RedrankAI — Intelligent Candidate Ranking System
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/26vTwB?referralCode=gWEQhe&utm_medium=integration&utm_source=template&utm_campaign=generic)
 
 RedrankAI is an intelligent, high-performance candidate ranking web application built for the **Redrob Data & AI Challenge**. It is designed to rank 100,000 candidates against any job description using a hybrid, multi-signal scoring engine, mirroring the decision-making of a seasoned recruiter rather than simple keyword matching.
 
