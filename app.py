@@ -32,21 +32,33 @@ DATA_PATH = os.path.join(os.path.dirname(__file__), "candidates.jsonl")
 def load_data_background():
     global DATA_LOADED, CANDIDATES
     try:
-        # Count total first
-        with open(DATA_PATH, "r", encoding="utf-8") as f:
-            total = sum(1 for _ in f)
-        LOAD_PROGRESS["total"] = total
+        if os.path.exists(DATA_PATH):
+            print(f"[RedrankAI] Loading main database from {DATA_PATH}...")
+            # Count total first
+            with open(DATA_PATH, "r", encoding="utf-8") as f:
+                total = sum(1 for _ in f)
+            LOAD_PROGRESS["total"] = total
 
-        tmp = []
-        with open(DATA_PATH, "r", encoding="utf-8") as f:
-            for i, line in enumerate(f):
-                line = line.strip()
-                if line:
-                    try:
-                        tmp.append(json.loads(line))
-                    except Exception:
-                        pass
-                    LOAD_PROGRESS["loaded"] = i + 1
+            tmp = []
+            with open(DATA_PATH, "r", encoding="utf-8") as f:
+                for i, line in enumerate(f):
+                    line = line.strip()
+                    if line:
+                        try:
+                            tmp.append(json.loads(line))
+                        except Exception:
+                            pass
+                        LOAD_PROGRESS["loaded"] = i + 1
+        else:
+            fallback_path = os.path.join(os.path.dirname(__file__), "sample_candidates.json")
+            print(f"[RedrankAI] Main database not found. Loading fallback sample from {fallback_path}...")
+            if os.path.exists(fallback_path):
+                with open(fallback_path, "r", encoding="utf-8") as f:
+                    tmp = json.load(f)
+                LOAD_PROGRESS["total"] = len(tmp)
+                LOAD_PROGRESS["loaded"] = len(tmp)
+            else:
+                raise FileNotFoundError("Neither candidates.jsonl nor sample_candidates.json found.")
 
         with CANDIDATES_LOCK:
             CANDIDATES = tmp
