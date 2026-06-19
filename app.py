@@ -82,6 +82,8 @@ DOMAIN_SYNONYMS = {
     "react": ["reactjs", "react.js", "next.js", "nextjs"],
     "leadership": ["team lead", "manager", "director", "vp", "head of", "led team", "managed team"],
     "startup": ["seed", "series a", "series b", "early stage", "pre-ipo", "founded"],
+    "java": ["java", "jaba", "jdk", "jre", "jee", "j2ee", "spring boot", "springboot", "springmvc", "hibernate", "spring"],
+    "bangalore": ["bangalore", "banglore", "bengaluru"]
 }
 
 PROFICIENCY_WEIGHT = {
@@ -160,14 +162,18 @@ def score_candidate(candidate: dict, jd_keywords: list[str], jd_text: str,
     # ── 1. Skills Score ──────────────────────────────────────────────────────
     skill_scores = []
     matched_skills = []
+    noise_skills = {"looking", "expertise", "engineer", "engineering", "software", "developer", "with", "for", "role", "need", "want", "required", "years", "experience", "and", "in"}
     for sk in skills:
         sk_name_lower = normalize(sk["name"])
         # Direct or semantic match
         match_strength = 0.0
         if sk_name_lower in kw_set:
-            match_strength = 1.0
+            if sk_name_lower not in noise_skills:
+                match_strength = 1.0
         else:
             for kw in jd_keywords:
+                if kw in noise_skills:
+                    continue
                 if sk_name_lower in kw or kw in sk_name_lower:
                     match_strength = 0.7
                     break
@@ -354,8 +360,51 @@ def score_candidate(candidate: dict, jd_keywords: list[str], jd_text: str,
     total_w = sum(w.values())
     final_score = min(raw_score / total_w, 1.0)
 
+    # Location constraint matching
+    known_cities = {
+        "bangalore": ["bangalore", "banglore", "bengaluru"],
+        "mumbai": ["mumbai", "bombay"],
+        "delhi": ["delhi", "new delhi", "ncr", "noida", "gurgaon", "gurugram", "delhi ncr"],
+        "hyderabad": ["hyderabad"],
+        "pune": ["pune"],
+        "chennai": ["chennai", "madras"],
+        "kolkata": ["kolkata", "calcutta"],
+        "san francisco": ["sf", "san francisco", "bay area"],
+        "new york": ["ny", "nyc", "new york"],
+        "london": ["london"],
+        "singapore": ["singapore"],
+    }
+
+    target_cities = []
+    for city, synonyms in known_cities.items():
+        if city in jd_lower or any(syn in jd_lower for syn in synonyms):
+            target_cities.append(city)
+
+    location_multiplier = 1.0
+    outside_reason = None
+    if target_cities:
+        cand_loc = normalize(profile.get("location", ""))
+        matched_location = False
+        for city in target_cities:
+            synonyms = known_cities[city]
+            if city in cand_loc or any(syn in cand_loc for syn in synonyms):
+                matched_location = True
+                break
+        
+        if not matched_location:
+            if signals.get("willing_to_relocate"):
+                location_multiplier = 0.5
+                outside_reason = "Outside requested location (willing to relocate)"
+            else:
+                location_multiplier = 0.05
+                outside_reason = "Outside requested location"
+
+    final_score *= location_multiplier
+
     # Build human-readable reasoning
     reasons = []
+    if outside_reason:
+        reasons.append(outside_reason)
     if matched_skills:
         reasons.append(f"{len(matched_skills)} matching skill{'s' if len(matched_skills)>1 else ''}: {', '.join(matched_skills[:4])}")
     if profile.get("years_of_experience"):
