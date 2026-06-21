@@ -338,3 +338,15 @@ footer {
 @media (max-width: 768px) {
   .hero-stats { flex-wrap: wrap; gap: 1rem; }
 }
+
+@media (max-width: 600px) {
+  .footer-bottom {
+    flex-direction: column;
+    text-align: center;
+    align-items: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .container { padding: 0 1rem; }
+}

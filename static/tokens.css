@@ -98,3 +98,13 @@ body.custom-cursor-disabled #cursor-ring {
 ::-webkit-scrollbar-track { background: var(--page); }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--ink-muted); }
+
+/* Disable custom cursor on touch/mobile devices */
+@media (max-width: 1024px) {
+  #cursor, #cursor-ring {
+    display: none !important;
+  }
+  body {
+    cursor: auto !important;
+  }
+}
