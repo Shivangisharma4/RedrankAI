@@ -8,11 +8,15 @@ RedrankAI is an offline-first, high-performance candidate ranking web applicatio
 
 * **Multi-Signal Ranking:** Scores profiles across 6 dimensions: Skills, Career Trajectory, Experience Fit, Education Quality, Behavioral signals, and Availability.
 
+
 * **Dynamic Location Resolution:** Matches search target cities dynamically and groups regional hubs (e.g. Noida, Gurgaon) to canonical zones (e.g. Delhi NCR) offline.
+
 
 * **Performance Optimized:** Uses pre-normalized profile ingestion and cached query constants to evaluate 100k records in ~2.5s.
 
+
 * **Adjustable Priorities:** Real-time adjustable scoring weight sliders and advanced filters.
+
 
 * **Fully Responsive UI:** Minimalist, editorial layout adapting to mobile and desktop screens.
 
