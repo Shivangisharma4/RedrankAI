@@ -1,7 +1,4 @@
-/* ─────────────────────────────────────────────────────────────────
-   RedrankAI Main Stylesheet
-   Imports modular component stylesheets for clean separation.
-───────────────────────────────────────────────────────────────── */
+
 @import url('tokens.css');
 @import url('layout.css');
 @import url('form.css');
