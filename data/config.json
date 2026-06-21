@@ -1,0 +1,69 @@
+{
+  "default_weights": {
+    "skills": 0.30,
+    "career": 0.25,
+    "experience": 0.15,
+    "education": 0.10,
+    "behavioral": 0.12,
+    "availability": 0.08
+  },
+  "domain_synonyms": {
+    "machine learning": ["ml", "deep learning", "neural network", "ai", "artificial intelligence", "predictive modeling", "statistical modeling"],
+    "python": ["py", "python3", "python2", "pyspark"],
+    "sql": ["mysql", "postgresql", "postgres", "sqlite", "t-sql", "plsql"],
+    "data engineering": ["data pipeline", "etl", "elt", "apache spark", "pyspark", "airflow", "databricks", "data lake", "data warehouse", "snowflake", "bigquery"],
+    "nlp": ["natural language processing", "text classification", "sentiment analysis", "named entity recognition", "ner", "bert", "gpt", "llm", "large language model", "fine-tuning llms", "transformers"],
+    "cloud": ["aws", "gcp", "azure", "google cloud", "amazon web services"],
+    "devops": ["docker", "kubernetes", "k8s", "ci/cd", "jenkins", "terraform", "ansible"],
+    "react": ["reactjs", "react.js", "next.js", "nextjs"],
+    "leadership": ["team lead", "manager", "director", "vp", "head of", "led team", "managed team"],
+    "startup": ["seed", "series a", "series b", "early stage", "pre-ipo", "founded"],
+    "java": ["java", "jaba", "jdk", "jre", "jee", "j2ee", "spring boot", "springboot", "springmvc", "hibernate", "spring"]
+  },
+  "proficiency_weight": {
+    "beginner": 0.25,
+    "intermediate": 0.55,
+    "advanced": 0.80,
+    "expert": 1.00
+  },
+  "edu_tier_weight": {
+    "tier_1": 1.00,
+    "tier_2": 0.75,
+    "tier_3": 0.55,
+    "tier_4": 0.35,
+    "unknown": 0.20
+  },
+  "degree_weight": {
+    "ph.d": 1.0, "phd": 1.0,
+    "m.tech": 0.85, "m.e.": 0.85, "m.s.": 0.85, "ms": 0.85, "mtech": 0.85,
+    "mba": 0.80,
+    "m.sc": 0.75, "msc": 0.75, "m.sc.": 0.75,
+    "b.tech": 0.65, "b.e.": 0.65, "be": 0.65, "btech": 0.65, "b.e": 0.65,
+    "b.sc": 0.55, "bsc": 0.55,
+    "b.com": 0.45, "b.a.": 0.40
+  },
+  "city_synonyms": {
+    "bangalore": "bengaluru",
+    "banglore": "bengaluru",
+    "bengaluru": "bengaluru",
+    "gurgaon": "delhi ncr",
+    "gurugram": "delhi ncr",
+    "noida": "delhi ncr",
+    "delhi": "delhi ncr",
+    "new delhi": "delhi ncr",
+    "ncr": "delhi ncr",
+    "delhi ncr": "delhi ncr",
+    "ny": "new york",
+    "nyc": "new york",
+    "new york": "new york",
+    "sf": "san francisco",
+    "bay area": "san francisco",
+    "san francisco": "san francisco",
+    "bombay": "mumbai",
+    "mumbai": "mumbai",
+    "calcutta": "kolkata",
+    "kolkata": "kolkata",
+    "madras": "chennai",
+    "chennai": "chennai"
+  }
+}

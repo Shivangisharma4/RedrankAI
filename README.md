@@ -20,15 +20,19 @@ RedrankAI is an intelligent, high-performance candidate ranking web application 
 
 ```
 Flask Backend (app.py)          Static Frontend (static/index.html)
-─────────────────────           ──────────────────────────────────
+   │ (delegates scoring)                 │
+   ▼                                     ▼
+scoring.py (Algorithm engine)       static/style.css (Design tokens & layout)
+                                    static/app.js (UI interactions & API fetches)
+
 /api/status          ←──────→   Live loading progress bar
 /api/rank  (POST)    ←──────→   JD input + weight sliders + results
 /api/candidate/:id   ←──────→   Full profile view
 /api/stats           ←──────→   Dataset statistics
 ```
 
-- **Backend:** Flask web server + in-memory scoring engine
-- **Frontend:** Single-page application with a premium editorial design system
+- **Backend:** Flask web server (`app.py`) + modular scoring engine (`scoring.py`)
+- **Frontend:** HTML5 layout skeleton (`static/index.html`), stylesheet (`static/style.css`), app logic (`static/app.js`)
 - **Port:** Runs locally on `http://localhost:5050`
 
 ---
@@ -93,8 +97,16 @@ pip install flask
 
 ## Project Structure
 
-- `app.py` — Flask backend, routing, and scoring logic.
-- `static/index.html` — Full-featured frontend with responsive layout and interactive dashboard.
-- `candidate_schema.json` — JSON schema documentation for the candidates data.
-- `sample_candidates.json` — A subset of candidate profiles for quick validation.
-- `validate_submission.py` — Validation script to check candidate submission files.
+- `app.py` — Flask backend, serving routes and status.
+- `scoring.py` — Core algorithm scoring engine (extracted helper module).
+- `static/` — Frontend web app files.
+  - `index.html` — Page structure skeleton.
+  - `style.css` — User interface styling.
+  - `app.js` — Client-side logic and API fetch requests.
+- `data/` — Grouped data files.
+  - `candidates.jsonl` — High-scale database (100,000 profiles).
+  - `sample_candidates.json` — Validation subset.
+  - `candidate_schema.json` — JSON schema documenting data format.
+  - `sample_submission.csv` — Example submission output.
+  - `submission_metadata_template.yaml` — Reproduce command template.
+- `validate_submission.py` — Challenge rule verification script.
