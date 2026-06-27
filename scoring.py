@@ -15,6 +15,28 @@ EDU_TIER_WEIGHT = _config["edu_tier_weight"]
 DEGREE_WEIGHT = _config["degree_weight"]
 CITY_SYNONYMS = _config["city_synonyms"]
 
+DEGREE_PATTERNS = {
+    k: re.compile(r'\b' + re.escape(k) + r'\b') for k in DEGREE_WEIGHT
+}
+
+# ── Consistency / honeypot-detection thresholds ─────────────────────────────
+# The challenge dataset includes ~80 honeypot candidates with internally
+# impossible profiles (e.g. "expert" proficiency claimed with 0 months of
+# actual use, or years_of_experience that doesn't square with career_history).
+# These thresholds are intentionally conservative (only fire on clear
+# contradictions) so we don't accidentally penalize honest candidates with
+# slightly messy data entry.
+CONSISTENCY_RULES = {
+    "expert_min_duration_months": 3,      # "expert"/"advanced" with <= this many months used = suspicious
+    "expert_penalty": 0.55,
+    "experience_mismatch_ratio": 1.8,     # yoe vs sum(career duration) off by more than this ratio = suspicious
+    "experience_mismatch_penalty": 0.55,
+    "date_duration_tolerance_months": 6,  # declared duration_months vs (end-start) computed months
+    "date_duration_penalty": 0.75,
+    "education_timeline_penalty": 0.5,
+    "min_multiplier_floor": 0.03,         # never literally zero (keeps tie-break logic sane), but pushes to the bottom
+}
+
 
 def normalize(text: str) -> str:
     return re.sub(r'\s+', ' ', text.lower().strip())
@@ -35,15 +57,89 @@ def extract_keywords(jd_text: str) -> list[str]:
     # Semantic expansion
     expanded = set(raw_kws)
     for primary, synonyms in DOMAIN_SYNONYMS.items():
-        if primary in text or any(s in text for s in synonyms):
+        if re.search(r'\b' + re.escape(primary) + r'\b', text) or any(re.search(r'\b' + re.escape(s) + r'\b', text) for s in synonyms):
             expanded.add(primary)
             expanded.update(synonyms)
 
     return list(expanded)
 
 
+def compute_consistency_signal(candidate: dict, today: date) -> tuple[float, list[str]]:
+    """
+    Detects internally-inconsistent ("honeypot-style") profiles: claims that
+    can't logically be true given the rest of the profile. Returns a
+    multiplier in (0, 1] to apply to the final score, plus human-readable
+    flags (used in the reasoning column and for your own QA pass before
+    submitting). Independent inconsistencies compound rather than capping
+    at a single penalty, since a profile with three contradictions is worse
+    than one with a single typo.
+
+    This does not special-case the specific honeypots in the dataset; it
+    checks for the general patterns the challenge spec calls out (expert
+    proficiency with ~0 usage, experience that doesn't square with career
+    history) so it should generalize to honeypot variants we haven't seen.
+    """
+    R = CONSISTENCY_RULES
+    profile = candidate.get("profile", {})
+    skills = candidate.get("skills", [])
+    career = candidate.get("career_history", [])
+    education = candidate.get("education", [])
+
+    flags = []
+    multiplier = 1.0
+
+    # 1. "Expert"/"advanced" proficiency claimed with almost no hands-on time.
+    for sk in skills:
+        prof = sk.get("proficiency", "beginner")
+        dur = sk.get("duration_months", 0)
+        if prof in ("expert", "advanced") and dur <= R["expert_min_duration_months"]:
+            flags.append(f"'{prof}' proficiency in {sk.get('name', 'a skill')} with only {dur} month(s) used")
+            multiplier *= R["expert_penalty"]
+
+    # 2. Total years_of_experience vs what career_history actually sums to.
+    yoe = profile.get("years_of_experience", 0)
+    total_career_months = sum(j.get("duration_months", 0) for j in career)
+    claimed_months = yoe * 12
+    if claimed_months > 0 and total_career_months > 0:
+        ratio = max(claimed_months, total_career_months) / max(min(claimed_months, total_career_months), 1)
+        if ratio > R["experience_mismatch_ratio"]:
+            flags.append(
+                f"years_of_experience ({yoe:.1f}) doesn't square with career_history total "
+                f"({total_career_months / 12:.1f} yrs)"
+            )
+            multiplier *= R["experience_mismatch_penalty"]
+
+    # 3. Declared duration_months vs what the start/end dates actually compute to.
+    for j in career:
+        sd, ed, dm = j.get("start_date"), j.get("end_date"), j.get("duration_months")
+        if not sd or dm is None:
+            continue
+        try:
+            start = date.fromisoformat(sd)
+            end = date.fromisoformat(ed) if ed else today
+            computed_months = (end.year - start.year) * 12 + (end.month - start.month)
+            if abs(computed_months - dm) > R["date_duration_tolerance_months"]:
+                flags.append(
+                    f"{j.get('title', 'a role')} at {j.get('company', '?')}: declared {dm} months "
+                    f"but dates imply ~{computed_months}"
+                )
+                multiplier *= R["date_duration_penalty"]
+        except (ValueError, TypeError):
+            continue
+
+    # 4. Education timeline that can't be true (graduated before enrolling).
+    for edu in education:
+        sy, ey = edu.get("start_year"), edu.get("end_year")
+        if sy is not None and ey is not None and ey < sy:
+            flags.append(f"education end_year ({ey}) before start_year ({sy})")
+            multiplier *= R["education_timeline_penalty"]
+
+    multiplier = max(multiplier, R["min_multiplier_floor"])
+    return multiplier, flags
+
+
 def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], weights: dict,
-                    today: date, jd_lower: str, exp_req: int, target_cities: list[str], total_w: float) -> dict:
+                    today: date, jd_lower: str, exp_req: int, target_cities: list[str], total_w: float, simple: bool = False) -> dict:
     """
     Multi-signal hybrid scoring (decoupled from weights and city lookups):
     1. Skills match (semantic + proficiency + endorsements + duration)
@@ -74,7 +170,8 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
             for kw in jd_keywords:
                 if kw in noise_skills:
                     continue
-                if sk_name_lower in kw or kw in sk_name_lower:
+                # Boundary-safe match
+                if (sk_name_lower in kw or kw in sk_name_lower) and (re.search(r'\b' + re.escape(sk_name_lower) + r'\b', kw) or re.search(r'\b' + re.escape(kw) + r'\b', sk_name_lower)):
                     match_strength = 0.7
                     break
 
@@ -89,7 +186,8 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
             assessment_bonus = 0.0
             assessment_scores = signals.get("skill_assessment_scores", {})
             for ak, av in assessment_scores.items():
-                if normalize(ak) in sk_name_lower or sk_name_lower in normalize(ak):
+                ak_norm = normalize(ak)
+                if (ak_norm in sk_name_lower or sk_name_lower in ak_norm) and (re.search(r'\b' + re.escape(ak_norm) + r'\b', sk_name_lower) or re.search(r'\b' + re.escape(sk_name_lower) + r'\b', ak_norm)):
                     assessment_bonus = (av / 100.0) * 0.3
                     break
             sk_total = match_strength * (
@@ -108,13 +206,24 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
         job_industry = job["industry_norm"]
         job_months = job.get("duration_months", 0)
 
-        # Title relevance
-        title_rel = sum(1 for kw in jd_keywords if kw in job_title) / max(len(jd_keywords), 1)
+        # Title relevance: O(1) set lookup with O(N) regex fallback
+        if "title_tokens" in job:
+            title_rel = sum(1 for kw in jd_keywords if kw in job["title_tokens"]) / max(len(jd_keywords), 1)
+        else:
+            title_rel = sum(1 for kw in jd_keywords if (kw in job_title) and re.search(r'\b' + re.escape(kw) + r'\b', job_title)) / max(len(jd_keywords), 1)
+
         # Description relevance
-        desc_kw_hits = sum(1 for kw in jd_keywords if kw in job_desc)
+        if "desc_tokens" in job:
+            desc_kw_hits = sum(1 for kw in jd_keywords if kw in job["desc_tokens"])
+        else:
+            desc_kw_hits = sum(1 for kw in jd_keywords if (kw in job_desc) and re.search(r'\b' + re.escape(kw) + r'\b', job_desc))
         desc_rel = min(desc_kw_hits / 10.0, 1.0)
+
         # Industry relevance
-        ind_rel = sum(1 for kw in jd_keywords if kw in job_industry) / max(len(jd_keywords), 1)
+        if "industry_tokens" in job:
+            ind_rel = sum(1 for kw in jd_keywords if kw in job["industry_tokens"]) / max(len(jd_keywords), 1)
+        else:
+            ind_rel = sum(1 for kw in jd_keywords if (kw in job_industry) and re.search(r'\b' + re.escape(kw) + r'\b', job_industry)) / max(len(jd_keywords), 1)
 
         job_rel = 0.5 * desc_rel + 0.35 * title_rel + 0.15 * ind_rel
         if job.get("is_current"):
@@ -163,11 +272,11 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
             tier = edu.get("tier", "unknown")
             field = edu["field_norm"]
 
-            deg_w = max(DEGREE_WEIGHT.get(k, 0) for k in DEGREE_WEIGHT if k in degree) if any(k in degree for k in DEGREE_WEIGHT) else 0.3
+            deg_w = max((DEGREE_WEIGHT[k] for k, pattern in DEGREE_PATTERNS.items() if k in degree and pattern.search(degree)), default=0.3)
             tier_w = EDU_TIER_WEIGHT.get(tier, 0.2)
 
             # Field relevance to JD
-            field_rel = sum(1 for kw in jd_keywords if kw in field) / max(len(jd_keywords), 1)
+            field_rel = sum(1 for kw in jd_keywords if kw in field and re.search(r'\b' + re.escape(kw) + r'\b', field)) / max(len(jd_keywords), 1)
             field_rel = min(field_rel * 20, 1.0)  # Amplify
 
             edu_val = 0.5 * deg_w + 0.3 * tier_w + 0.2 * field_rel
@@ -184,12 +293,17 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
     responsiveness = 0.6 * resp_rate + 0.4 * resp_time_score
 
     # Engagement / activity
-    last_active_str = signals.get("last_active_date", "2020-01-01")
-    try:
-        last_active = date.fromisoformat(last_active_str)
+    last_active = signals.get("last_active_date_obj")
+    if not last_active:
+        last_active_str = signals.get("last_active_date", "2020-01-01")
+        try:
+            last_active = date.fromisoformat(last_active_str)
+        except Exception:
+            last_active = None
+    if last_active:
         days_inactive = (today - last_active).days
         activity_score = max(0, 1.0 - days_inactive / 365.0)
-    except Exception:
+    else:
         activity_score = 0.0
 
     # Profile quality
@@ -253,7 +367,7 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
         for city in target_cities:
             syn = CITY_SYNONYMS.get(city, city)
             # Match normalized candidate location with normalized target city (or its resolved synonym)
-            if city in cand_loc or syn in cand_loc:
+            if (city in cand_loc or syn in cand_loc) and (re.search(r'\b' + re.escape(city) + r'\b', cand_loc) or re.search(r'\b' + re.escape(syn) + r'\b', cand_loc)):
                 matched_location = True
                 break
         
@@ -267,8 +381,17 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
 
     final_score *= location_multiplier
 
+    # Consistency / honeypot check — applied after location so an inconsistent
+    # profile can't escape the penalty by also being in the right city.
+    consistency_multiplier, consistency_flags = compute_consistency_signal(candidate, today)
+    final_score *= consistency_multiplier
+
     # Build human-readable reasoning
     reasons = []
+    if consistency_flags:
+        first = consistency_flags[0]
+        extra = f" (+{len(consistency_flags) - 1} more)" if len(consistency_flags) > 1 else ""
+        reasons.append(f"Profile inconsistency: {first}{extra}")
     if outside_reason:
         reasons.append(outside_reason)
     if matched_skills:
@@ -284,7 +407,7 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
     if not reasons:
         reasons.append("General profile match")
 
-    return {
+    result = {
         "candidate_id": candidate["candidate_id"],
         "score": round(final_score, 4),
         "component_scores": {
@@ -297,6 +420,32 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
         },
         "matched_skills": matched_skills[:8],
         "reasoning": "; ".join(reasons),
+        "consistency_flags": consistency_flags,
+    }
+
+    if simple:
+        return result
+
+    return inflate_candidate(candidate, result)
+
+
+def inflate_candidate(candidate: dict, score_result: dict) -> dict:
+    profile = candidate["profile"]
+    signals = candidate.get("redrob_signals", {})
+    skills = candidate.get("skills", [])
+    career = candidate.get("career_history", [])
+    education = candidate.get("education", [])
+    yoe = profile.get("years_of_experience", 0)
+
+    salRange = signals.get("expected_salary_range_inr_lpa", {})
+
+    return {
+        "candidate_id": score_result["candidate_id"],
+        "score": score_result["score"],
+        "component_scores": score_result["component_scores"],
+        "matched_skills": score_result["matched_skills"],
+        "reasoning": score_result["reasoning"],
+        "consistency_flags": score_result.get("consistency_flags", []),
         "profile": {
             "name": profile.get("anonymized_name", "Unknown"),
             "headline": profile.get("headline", ""),
@@ -312,7 +461,10 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
         "skills": skills[:12],
         "education": education,
         "certifications": candidate.get("certifications", []),
-        "career_history": career,
+        "career_history": [
+            {k: v for k, v in job.items() if not k.endswith("_tokens")}
+            for job in career
+        ],
         "signals": {
             "open_to_work": signals.get("open_to_work_flag", False),
             "notice_period_days": signals.get("notice_period_days", 0),
@@ -320,7 +472,7 @@ def score_candidate(candidate: dict, jd_keywords: list[str], kw_set: set[str], w
             "github_activity_score": signals.get("github_activity_score", -1),
             "recruiter_response_rate": signals.get("recruiter_response_rate", 0),
             "last_active_date": signals.get("last_active_date", ""),
-            "expected_salary_range_inr_lpa": signals.get("expected_salary_range_inr_lpa", {}),
+            "expected_salary_range_inr_lpa": salRange,
             "preferred_work_mode": signals.get("preferred_work_mode", ""),
             "willing_to_relocate": signals.get("willing_to_relocate", False),
             "verified_email": signals.get("verified_email", False),

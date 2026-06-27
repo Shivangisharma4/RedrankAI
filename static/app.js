@@ -1,4 +1,49 @@
-import { animate, stagger } from 'https://cdn.jsdelivr.net/npm/motion/+esm';
+let animate = (el, properties, options) => {
+  if (typeof el === 'string') {
+    document.querySelectorAll(el).forEach(element => {
+      applyMockStyles(element, properties);
+    });
+  } else if (el instanceof HTMLElement) {
+    applyMockStyles(el, properties);
+  } else if (el && el.forEach) {
+    el.forEach(element => applyMockStyles(element, properties));
+  }
+  return Promise.resolve();
+};
+
+let stagger = (value) => value;
+
+function applyMockStyles(element, properties) {
+  if (!element || !properties) return;
+  for (const [key, val] of Object.entries(properties)) {
+    let targetVal = val;
+    if (Array.isArray(val)) {
+      targetVal = val[val.length - 1];
+    }
+    if (key === 'y') {
+      element.style.transform = `translateY(${typeof targetVal === 'number' ? targetVal + 'px' : targetVal})`;
+    } else if (key === 'opacity') {
+      element.style.opacity = targetVal;
+    } else if (key === 'width') {
+      element.style.width = targetVal;
+    } else if (key === 'scale') {
+      element.style.transform = (element.style.transform || '') + ` scale(${targetVal})`;
+    } else if (key === 'height') {
+      element.style.height = typeof targetVal === 'number' ? targetVal + 'px' : targetVal;
+    } else {
+      element.style[key] = targetVal;
+    }
+  }
+}
+
+import('https://cdn.jsdelivr.net/npm/motion/+esm')
+  .then(module => {
+    animate = module.animate;
+    stagger = module.stagger;
+  })
+  .catch(err => {
+    console.warn("Failed to load Motion One from CDN. Using mock fallback.", err);
+  });
 
 // ── Custom cursor with dynamic delegation ──
 const cursor = document.getElementById('cursor');
@@ -296,10 +341,12 @@ function showToast(msg, type = '') {
 window.showToast = showToast;
 
 // ── Sort ──
-function setSortOrder(order) {
+function setSortOrder(order, event) {
   sortOrder = order;
   document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if (event && event.target) {
+    event.target.classList.add('active');
+  }
   renderResults(currentResults);
 }
 window.setSortOrder = setSortOrder;

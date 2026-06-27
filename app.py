@@ -29,6 +29,7 @@ app = Flask(__name__, static_folder='static', static_url_path='')
 # ──────────────────────────────────────────────────────────────────────────────
 CANDIDATES = []
 ALL_CITIES = set()
+CANDIDATES_MAP = {}
 CANDIDATES_LOCK = threading.Lock()
 DATA_LOADED = False
 LOAD_PROGRESS = {"loaded": 0, "total": 0, "done": False}
@@ -40,9 +41,17 @@ DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "candidates.jsonl")
 # Background data loader
 # ──────────────────────────────────────────────────────────────────────────────
 def load_data_background():
-    global DATA_LOADED, CANDIDATES, ALL_CITIES
+    global DATA_LOADED, CANDIDATES, ALL_CITIES, CANDIDATES_MAP
     try:
         tmp_cities = set()
+        tmp_map = {}
+        
+        # Helper to extract tokens for fast boundary-safe O(1) set lookup
+        def get_tokens(text):
+            words = re.findall(r"[a-z][a-z0-9\+\#\.\/\-]*", text)
+            bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
+            return set(words + bigrams)
+
         if os.path.exists(DATA_PATH):
             print(f"[RedrankAI] Loading main database from {DATA_PATH}...")
             LOAD_PROGRESS["total"] = 100000
@@ -58,11 +67,14 @@ def load_data_background():
                             # Pre-normalize skills
                             for sk in c.get("skills", []):
                                 sk["name_norm"] = normalize(sk.get("name", ""))
-                            # Pre-normalize career history
+                            # Pre-normalize and pre-tokenize career history
                             for job in c.get("career_history", []):
-                                job["title_norm"] = normalize(job.get("title", ""))
-                                job["description_norm"] = normalize(job.get("description", ""))
-                                job["industry_norm"] = normalize(job.get("industry", ""))
+                                job["title_norm"] = tn = normalize(job.get("title", ""))
+                                job["description_norm"] = dn = normalize(job.get("description", ""))
+                                job["industry_norm"] = in_ = normalize(job.get("industry", ""))
+                                job["title_tokens"] = get_tokens(tn)
+                                job["desc_tokens"] = get_tokens(dn)
+                                job["industry_tokens"] = get_tokens(in_)
                             # Pre-normalize education
                             for edu in c.get("education", []):
                                 edu["degree_norm"] = normalize(edu.get("degree", ""))
@@ -76,7 +88,17 @@ def load_data_background():
                                 if parts and parts[0]:
                                     tmp_cities.add(parts[0])
                             
+                            # Pre-parse last active date to save loop time
+                            sig = c.get("redrob_signals", {})
+                            last_active_str = sig.get("last_active_date")
+                            if last_active_str:
+                                try:
+                                    sig["last_active_date_obj"] = date.fromisoformat(last_active_str)
+                                except Exception:
+                                    pass
+
                             tmp.append(c)
+                            tmp_map[c["candidate_id"]] = c
                         except Exception:
                             pass
                         LOAD_PROGRESS["loaded"] = i + 1
@@ -92,9 +114,12 @@ def load_data_background():
                     for sk in c.get("skills", []):
                         sk["name_norm"] = normalize(sk.get("name", ""))
                     for job in c.get("career_history", []):
-                        job["title_norm"] = normalize(job.get("title", ""))
-                        job["description_norm"] = normalize(job.get("description", ""))
-                        job["industry_norm"] = normalize(job.get("industry", ""))
+                        job["title_norm"] = tn = normalize(job.get("title", ""))
+                        job["description_norm"] = dn = normalize(job.get("description", ""))
+                        job["industry_norm"] = in_ = normalize(job.get("industry", ""))
+                        job["title_tokens"] = get_tokens(tn)
+                        job["desc_tokens"] = get_tokens(dn)
+                        job["industry_tokens"] = get_tokens(in_)
                     for edu in c.get("education", []):
                         edu["degree_norm"] = normalize(edu.get("degree", ""))
                         edu["field_norm"] = normalize(edu.get("field_of_study", ""))
@@ -102,9 +127,20 @@ def load_data_background():
                     loc_norm = normalize(profile.get("location", ""))
                     profile["location_norm"] = loc_norm
                     if loc_norm:
-                        parts = [p.strip() for p in loc_norm.split(",")]
-                        if parts and parts[0]:
-                            tmp_cities.add(parts[0])
+                         parts = [p.strip() for p in loc_norm.split(",")]
+                         if parts and parts[0]:
+                             tmp_cities.add(parts[0])
+                    
+                    # Pre-parse last active date to save loop time
+                    sig = c.get("redrob_signals", {})
+                    last_active_str = sig.get("last_active_date")
+                    if last_active_str:
+                        try:
+                            sig["last_active_date_obj"] = date.fromisoformat(last_active_str)
+                        except Exception:
+                            pass
+                    
+                    tmp_map[c["candidate_id"]] = c
                 
                 tmp = raw_data
                 LOAD_PROGRESS["total"] = len(tmp)
@@ -115,6 +151,7 @@ def load_data_background():
         with CANDIDATES_LOCK:
             CANDIDATES = tmp
             ALL_CITIES = tmp_cities
+            CANDIDATES_MAP = tmp_map
         DATA_LOADED = True
         LOAD_PROGRESS["done"] = True
         print(f"[RedrankAI] Loaded {len(CANDIDATES):,} candidates (found {len(ALL_CITIES)} unique cities)")
@@ -242,7 +279,7 @@ def api_rank():
     for c in filtered:
         try:
             result = score_candidate(
-                c, jd_keywords, kw_set, weights, today, jd_lower, exp_req, target_cities, total_w
+                c, jd_keywords, kw_set, weights, today, jd_lower, exp_req, target_cities, total_w, simple=True
             )
             scored.append(result)
         except Exception:
@@ -251,12 +288,18 @@ def api_rank():
     # Sort by score descending
     scored.sort(key=lambda x: x["score"], reverse=True)
 
-    elapsed = time.time() - start
-    shortlist = scored[:top_n]
+    # Assign ranks and inflate only the top N shortlist candidates
+    from scoring import inflate_candidate
+    shortlist = []
+    with CANDIDATES_LOCK:
+        for i, s in enumerate(scored[:top_n]):
+            c = CANDIDATES_MAP.get(s["candidate_id"])
+            if c:
+                inflated = inflate_candidate(c, s)
+                inflated["rank"] = i + 1
+                shortlist.append(inflated)
 
-    # Assign ranks
-    for i, s in enumerate(shortlist):
-        s["rank"] = i + 1
+    elapsed = time.time() - start
 
     return jsonify({
         "total_evaluated": len(filtered),
@@ -270,9 +313,9 @@ def api_rank():
 @app.route("/api/candidate/<candidate_id>")
 def api_candidate(candidate_id):
     with CANDIDATES_LOCK:
-        for c in CANDIDATES:
-            if c["candidate_id"] == candidate_id:
-                return jsonify(c)
+        c = CANDIDATES_MAP.get(candidate_id)
+        if c:
+            return jsonify(c)
     return jsonify({"error": "Not found"}), 404
 
 
