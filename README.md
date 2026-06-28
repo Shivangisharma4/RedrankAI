@@ -4,6 +4,8 @@ RedrankAI is an offline-first, high-performance candidate ranking web applicatio
 
 ---
 
+A 2 minute walkthrough on what broke and how I fixed it - https://www.loom.com/share/eb06f34956d24edaa52675de52042342
+
 ## How It Works
 
 The flowchart below shows the full journey from when you type a job description to when you see the ranked list of candidates.
