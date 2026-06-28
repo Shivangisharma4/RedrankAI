@@ -46,7 +46,7 @@ flowchart TD
 
     J --> honeypot
     honeypot --> K{Any red flags found?}
-    K -- Yes --> L[Score is multiplied down\neg. 3 red flags = score goes to ~5%\nof original. Pushed to the bottom.]
+    K -- Yes --> L[Score is multiplied down\neg. 3 red flags = score goes to ~15%\nof original. Pushed to the bottom.]
     K -- No --> M[Score stays as-is]
 
     L --> N
